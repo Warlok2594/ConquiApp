@@ -1,254 +1,184 @@
 package com.conqui.app.ui.screens
 
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.conqui.app.SupabaseClient
+import com.conqui.app.data.models.House
+import com.conqui.app.data.models.User
+import com.conqui.app.data.repository.AuthRepository
+import com.conqui.app.data.repository.HouseRepository
+import io.github.jan.supabase.gotrue.auth
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
-@Composable
-fun HouseScreen(
-    viewModel: HouseViewModel = viewModel(),
-    onLogout: (() -> Unit)? = null
-) {
-    val uiState by viewModel.uiState.collectAsState()
-    var houseName by remember { mutableStateOf("") }
-    var houseCode by remember { mutableStateOf("") }
-    var showCreateDialog by remember { mutableStateOf(false) }
-    var showJoinDialog by remember { mutableStateOf(false) }
+/**
+ * ViewModel per la gestione della casa e dei suoi membri
+ */
+class HouseViewModel : ViewModel() {
+    // Repository instances
+    private val authRepository = AuthRepository()
+    private val houseRepository = HouseRepository()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        if (uiState.currentHouse == null) {
-            // Nessuna casa - mostra opzioni per creare o unirsi
-            Text(
-                text = "Benvenuto in ConquiApp!",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
+    // State flows
+    private val _currentHouse = MutableStateFlow<House?>(null)
+    val currentHouse: StateFlow<House?> = _currentHouse
 
-            Spacer(modifier = Modifier.height(16.dp))
+    private val _members = MutableStateFlow<List<User>>(emptyList())
+    val members: StateFlow<List<User>> = _members  // Esplicitamente List<User>
 
-            Text(
-                text = "Non fai ancora parte di nessuna casa",
-                style = MaterialTheme.typography.bodyLarge
-            )
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
 
-            Spacer(modifier = Modifier.height(32.dp))
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error
 
-            Button(
-                onClick = { showCreateDialog = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Crea una nuova casa")
-            }
+    // Callback per il logout
+    private var logoutCallback: (() -> Unit)? = null
 
-            Spacer(modifier = Modifier.height(16.dp))
+    init {
+        loadUserHouse()
+    }
 
-            OutlinedButton(
-                onClick = { showJoinDialog = true },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Unisciti a una casa esistente")
-            }
+    /**
+     * Imposta il callback da chiamare dopo il logout
+     */
+    fun setLogoutCallback(callback: () -> Unit) {
+        logoutCallback = callback
+    }
 
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Pulsante logout temporaneo per testing
-            TextButton(
-                onClick = {
-                    viewModel.performLogout()
-                    onLogout?.invoke()
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Logout (debug)", color = MaterialTheme.colorScheme.error)
-            }
-        } else {
-            // Ha una casa - mostra dettagli
-            Card(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    Text(
-                        text = "La tua casa",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = uiState.currentHouse!!.name,
-                        style = MaterialTheme.typography.headlineSmall
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = "Codice: ${uiState.currentHouse!!.code}",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Text(
-                        text = "Membri: ${uiState.members.size}",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Lista membri
-                    if (uiState.members.isNotEmpty()) {
-                        Column {
-                            uiState.members.forEach { member ->
-                                Text(
-                                    text = "• ${member.username}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.padding(vertical = 2.dp)
-                                )
+    /**
+     * Carica la casa dell'utente corrente
+     */
+    fun loadUserHouse() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            try {
+                val userId = SupabaseClient.client.auth.currentUserOrNull()?.id
+                if (userId != null) {
+                    houseRepository.getUserHouse(userId).fold(
+                        onSuccess = { house ->
+                            _currentHouse.value = house
+                            house?.let {
+                                loadMembers(it.id)
                             }
+                        },
+                        onFailure = { exception ->
+                            _error.value = exception.message
                         }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        OutlinedButton(
-                            onClick = { viewModel.leaveHouse() }
-                        ) {
-                            Text("Lascia casa")
-                        }
-
-                        // Logout anche quando hai una casa
-                        TextButton(
-                            onClick = {
-                                viewModel.performLogout()
-                                onLogout?.invoke()
-                            }
-                        ) {
-                            Text("Logout", color = MaterialTheme.colorScheme.error)
-                        }
-                    }
+                    )
+                } else {
+                    _error.value = "Utente non autenticato"
                 }
+            } catch (e: Exception) {
+                _error.value = e.message
+            } finally {
+                _isLoading.value = false
             }
         }
+    }
 
-        // Loading indicator
-        if (uiState.isLoading) {
-            CircularProgressIndicator(
-                modifier = Modifier.padding(16.dp)
-            )
+    /**
+     * Crea una nuova casa
+     */
+    fun createHouse(name: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            try {
+                val userId = SupabaseClient.client.auth.currentUserOrNull()?.id
+                if (userId != null) {
+                    houseRepository.createHouse(name, userId).fold(
+                        onSuccess = { house ->
+                            _currentHouse.value = house
+                            loadMembers(house.id)
+                        },
+                        onFailure = { exception ->
+                            _error.value = exception.message
+                        }
+                    )
+                } else {
+                    _error.value = "Utente non autenticato"
+                }
+            } catch (e: Exception) {
+                _error.value = e.message
+            } finally {
+                _isLoading.value = false
+            }
         }
+    }
 
-        // Error message
-        uiState.errorMessage?.let { error ->
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = error,
-                    modifier = Modifier.padding(16.dp),
-                    color = MaterialTheme.colorScheme.onErrorContainer
+    /**
+     * Unisciti a una casa esistente usando il codice
+     */
+    fun joinHouse(code: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            try {
+                val userId = SupabaseClient.client.auth.currentUserOrNull()?.id
+                if (userId != null) {
+                    houseRepository.joinHouse(code, userId).fold(
+                        onSuccess = { house ->
+                            _currentHouse.value = house
+                            loadMembers(house.id)
+                        },
+                        onFailure = { exception ->
+                            _error.value = exception.message
+                        }
+                    )
+                } else {
+                    _error.value = "Utente non autenticato"
+                }
+            } catch (e: Exception) {
+                _error.value = e.message
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    /**
+     * Carica i membri della casa
+     */
+    private fun loadMembers(houseId: String) {
+        viewModelScope.launch {
+            try {
+                houseRepository.getHouseMembers(houseId).fold(
+                    onSuccess = { users ->
+                        _members.value = users
+                    },
+                    onFailure = { exception ->
+                        _error.value = "Errore nel caricamento dei membri: ${exception.message}"
+                    }
                 )
+            } catch (e: Exception) {
+                _error.value = "Errore nel caricamento dei membri: ${e.message}"
             }
         }
     }
 
-    // Dialog per creare casa
-    if (showCreateDialog) {
-        AlertDialog(
-            onDismissRequest = { showCreateDialog = false },
-            title = { Text("Crea nuova casa") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = houseName,
-                        onValueChange = { houseName = it },
-                        label = { Text("Nome casa") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.createHouse(houseName)
-                        showCreateDialog = false
-                        houseName = ""
-                    },
-                    enabled = houseName.isNotEmpty() && !uiState.isLoading
-                ) {
-                    Text("Crea")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        showCreateDialog = false
-                        houseName = ""
-                    }
-                ) {
-                    Text("Annulla")
-                }
+    /**
+     * Esegui il logout
+     */
+    fun performLogout() {
+        viewModelScope.launch {
+            try {
+                // Usa direttamente il client Supabase per il logout
+                SupabaseClient.client.auth.signOut()
+                // Chiama il callback se impostato
+                logoutCallback?.invoke()
+            } catch (e: Exception) {
+                _error.value = "Errore durante il logout: ${e.message}"
             }
-        )
+        }
     }
 
-    // Dialog per unirsi a casa
-    if (showJoinDialog) {
-        AlertDialog(
-            onDismissRequest = { showJoinDialog = false },
-            title = { Text("Unisciti a una casa") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = houseCode,
-                        onValueChange = { houseCode = it.uppercase() },
-                        label = { Text("Codice casa (6 caratteri)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.joinHouse(houseCode)
-                        showJoinDialog = false
-                        houseCode = ""
-                    },
-                    enabled = houseCode.length == 6 && !uiState.isLoading
-                ) {
-                    Text("Unisciti")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        showJoinDialog = false
-                        houseCode = ""
-                    }
-                ) {
-                    Text("Annulla")
-                }
-            }
-        )
+    /**
+     * Pulisci l'errore corrente
+     */
+    fun clearError() {
+        _error.value = null
     }
 }

@@ -1,142 +1,112 @@
 package com.conqui.app.ui.screens
 
-import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.conqui.app.SupabaseClient
-import com.conqui.app.data.repository.AuthRepository
-import io.github.jan.supabase.gotrue.auth
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.List
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainDashboard(
-    onLogout: () -> Unit,
-    houseViewModel: HouseViewModel = viewModel()
+    navController: NavHostController
 ) {
-    var selectedTab by remember { mutableStateOf(0) }
-    val houseUiState by houseViewModel.uiState.collectAsState()
+    val mainNavController = rememberNavController()
+    val navBackStackEntry by mainNavController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
 
-    // Se l'utente fa logout, naviga alla schermata login
+    // Crea il ViewModel qui per condividerlo tra le schermate
+    val houseViewModel: HouseViewModel = viewModel()
+
+    // Imposta il callback per il logout
     LaunchedEffect(Unit) {
-        houseViewModel.setLogoutCallback(onLogout)
+        houseViewModel.setLogoutCallback {
+            navController.navigate("login") {
+                popUpTo("main") { inclusive = true }
+            }
+        }
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "ConquiApp",
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                actions = {
-                    IconButton(onClick = onLogout) {
-                        Icon(
-                            Icons.Default.Logout,
-                            contentDescription = "Logout"
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            )
-        },
         bottomBar = {
             NavigationBar {
                 NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.Home, contentDescription = "Casa") },
-                    label = { Text("Casa") }
+                    icon = { Icon(Icons.Filled.Home, contentDescription = "Casa") },
+                    label = { Text("Casa") },
+                    selected = currentRoute == "house",
+                    onClick = {
+                        mainNavController.navigate("house") {
+                            popUpTo("house") { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
                 )
                 NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.List, contentDescription = "Turni") },
+                    icon = { Icon(Icons.Filled.List, contentDescription = "Turni") },
                     label = { Text("Turni") },
-                    enabled = houseUiState.currentHouse != null
+                    selected = currentRoute == "turni",
+                    onClick = {
+                        mainNavController.navigate("turni") {
+                            popUpTo("house") { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
                 )
                 NavigationBarItem(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    icon = { Icon(Icons.Default.CalendarToday, contentDescription = "Calendario") },
+                    icon = { Icon(Icons.Filled.DateRange, contentDescription = "Calendario") },
                     label = { Text("Calendario") },
-                    enabled = houseUiState.currentHouse != null
+                    selected = currentRoute == "calendario",
+                    onClick = {
+                        mainNavController.navigate("calendario") {
+                            popUpTo("house") { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
                 )
             }
         }
-    ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
+    ) { innerPadding ->
+        NavHost(
+            navController = mainNavController,
+            startDestination = "house",
+            modifier = Modifier.padding(innerPadding)
         ) {
-            when (selectedTab) {
-                0 -> HouseScreen()
-                1 -> {
-                    if (houseUiState.currentHouse != null) {
-                        TurniScreen()
-                    } else {
-                        NoCasaMessage()
+            composable("house") {
+                HouseScreen(
+                    viewModel = houseViewModel,
+                    onNavigateToTurni = {
+                        mainNavController.navigate("turni")
+                    },
+                    onNavigateToCalendario = {
+                        mainNavController.navigate("calendario")
                     }
-                }
-                2 -> {
-                    if (houseUiState.currentHouse != null) {
-                        val authRepository = AuthRepository()
-                        val currentUserId = authRepository.getCurrentUserId() ?: ""
-                        CalendarioTurniScreen(
-                            houseId = houseUiState.currentHouse!!.id,
-                            currentUserId = currentUserId
-                        )
-                    } else {
-                        NoCasaMessage()
+                )
+            }
+            composable("turni") {
+                TurniScreen(
+                    onNavigateBack = {
+                        mainNavController.navigateUp()
                     }
-                }
+                )
+            }
+            composable("calendario") {
+                CalendarioTurniScreen(
+                    onNavigateBack = {
+                        mainNavController.navigateUp()
+                    }
+                )
             }
         }
-    }
-}
-
-@Composable
-fun NoCasaMessage() {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
-        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
-    ) {
-        Icon(
-            Icons.Default.Home,
-            contentDescription = null,
-            modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = "Devi prima creare o unirti a una casa",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = "Vai alla sezione Casa per iniziare",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
